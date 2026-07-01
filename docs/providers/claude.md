@@ -39,3 +39,14 @@ Today / Yesterday / Last 30 Days are computed **locally** from your Claude Code 
 `GET https://api.anthropic.com/api/oauth/usage` with the Claude Code OAuth token; refresh via `platform.claude.com/v1/oauth/token`. A 401/403 triggers one token refresh and retry. If that still fails because the token is expired or revoked, OpenUsage retries with the next credential source before reporting an error.
 
 When the five-hour session window has no usage yet, the Session row shows **Not started** on the trailing label; hover explains that the session begins after your first message.
+
+## Tracking a second account
+
+OpenUsage can track a second, independent Claude Code login side by side with the first, shown as **Claude (Account 2)**. This is the same provider (identical refresh/mapping logic) constructed a second time against its own credential source — not a separate implementation.
+
+Setup, one time:
+
+1. Log in with Claude Code against a second config directory: `CLAUDE_CONFIG_DIR=~/.claude-2nd claude`. This creates its own `~/.claude-2nd/.credentials.json` and (on macOS) its own Keychain entry, both distinct from the primary `~/.claude` login.
+2. Restart OpenUsage. The **Claude (Account 2)** card reads `~/.claude-2nd` exclusively — it never reads `~/.claude`, and the primary Claude card never reads `~/.claude-2nd`.
+
+The two accounts don't share any state: separate credential/refresh handling, separate Session/Weekly/Sonnet/Extra Usage meters, and separate `ccusage`-backed spend tiles (scoped to `~/.claude-2nd`'s own Claude Code logs). "Not logged in" / "Re-login for live usage" on the Account 2 card refers only to that second login — sign in again with `CLAUDE_CONFIG_DIR=~/.claude-2nd claude`, not the plain `claude` command.

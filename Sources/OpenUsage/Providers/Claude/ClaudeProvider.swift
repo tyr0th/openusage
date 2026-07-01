@@ -2,15 +2,7 @@ import Foundation
 
 @MainActor
 final class ClaudeProvider: ProviderRuntime {
-    let provider = Provider(
-        id: "claude",
-        displayName: "Claude",
-        icon: .providerMark("claude"),
-        links: [
-            .init(label: "Status", url: "https://status.anthropic.com/"),
-            .init(label: "Dashboard", url: "https://claude.ai/settings/usage")
-        ]
-    )
+    let provider: Provider
 
     let authStore: ClaudeAuthStore
     let usageClient: ClaudeUsageClient
@@ -26,12 +18,28 @@ final class ClaudeProvider: ProviderRuntime {
     private var rateLimitedUntil: Date?
     private static let rateLimitCooldown: TimeInterval = 5 * 60
 
+    /// `id`/`displayName` are overridable so a second Claude account can register as its own provider
+    /// (`ClaudeSecondaryProvider`, id `claude-2`) reusing this exact refresh/mapping logic against a
+    /// differently-scoped `authStore` — the only thing that actually differs between accounts. Every
+    /// widget id and log tag below is derived from `provider.id`, never the literal `"claude"`, so two
+    /// instances never collide.
     init(
+        id: String = "claude",
+        displayName: String = "Claude",
         authStore: ClaudeAuthStore = ClaudeAuthStore(),
         usageClient: ClaudeUsageClient = ClaudeUsageClient(),
         ccusageRunner: CcusageRunner = CcusageRunner(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
+        self.provider = Provider(
+            id: id,
+            displayName: displayName,
+            icon: .providerMark("claude"),
+            links: [
+                .init(label: "Status", url: "https://status.anthropic.com/"),
+                .init(label: "Dashboard", url: "https://claude.ai/settings/usage")
+            ]
+        )
         self.authStore = authStore
         self.usageClient = usageClient
         self.ccusageRunner = ccusageRunner
@@ -40,10 +48,10 @@ final class ClaudeProvider: ProviderRuntime {
 
     var widgetDescriptors: [WidgetDescriptor] {
         [
-            .percent(id: "claude.session", provider: provider, title: "Session"),
-            .percent(id: "claude.weekly", provider: provider, title: "Weekly"),
-            .percent(id: "claude.sonnet", provider: provider, title: "Sonnet"),
-            .boundedDollars(id: "claude.extra", provider: provider, title: "Extra Usage", metricLabel: "Extra usage spent", limit: 100, valueWord: "spent"),
+            .percent(id: "\(provider.id).session", provider: provider, title: "Session"),
+            .percent(id: "\(provider.id).weekly", provider: provider, title: "Weekly"),
+            .percent(id: "\(provider.id).sonnet", provider: provider, title: "Sonnet"),
+            .boundedDollars(id: "\(provider.id).extra", provider: provider, title: "Extra Usage", metricLabel: "Extra usage spent", limit: 100, valueWord: "spent"),
             .usageTrend(provider: provider)
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
@@ -52,7 +60,7 @@ final class ClaudeProvider: ProviderRuntime {
         let candidates = await loadOffMainActor { [authStore] in authStore.loadCredentialCandidates() }
             .filter { $0.oauth.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
         guard !candidates.isEmpty else {
-            AppLog.info(LogTag.auth("claude"), "no access token, not logged in")
+            AppLog.info(LogTag.auth(provider.id), "no access token, not logged in")
             return ProviderSnapshot.error(provider: provider, error: ClaudeAuthError.notLoggedIn)
         }
 
@@ -60,7 +68,7 @@ final class ClaudeProvider: ProviderRuntime {
         // booleans) so a "token expired" report is diagnosable from a default log without a debug build —
         // e.g. all sources showing `refresh=no` explains why an expiry can never self-heal (issue #738).
         let sources = candidates.map { $0.diagnosticsLabel(now: now()) }.joined(separator: ", ")
-        AppLog.info(LogTag.plugin("claude"), "refresh start (\(candidates.count) source\(candidates.count == 1 ? "" : "s"): \(sources))")
+        AppLog.info(LogTag.plugin(provider.id), "refresh start (\(candidates.count) source\(candidates.count == 1 ? "" : "s"): \(sources))")
         let start = Date()
         // Probe each credential source in keychain-before-file order. An auth-expiry failure on one source (a
         // stale/locked-out token that an external `claude` re-login replaced in another source) falls
@@ -70,10 +78,10 @@ final class ClaudeProvider: ProviderRuntime {
         for state in candidates {
             do {
                 let snapshot = try await probe(state: state)
-                AppLog.info(LogTag.plugin("claude"), "refresh end (\(Int(Date().timeIntervalSince(start) * 1000))ms)")
+                AppLog.info(LogTag.plugin(provider.id), "refresh end (\(Int(Date().timeIntervalSince(start) * 1000))ms)")
                 return snapshot
             } catch let error as ClaudeAuthError where error.allowsAuthFallback {
-                AppLog.warn(LogTag.auth("claude"), "\(state.source.label) failed (\(error)); falling back to next source if any")
+                AppLog.warn(LogTag.auth(provider.id), "\(state.source.label) failed (\(error)); falling back to next source if any")
                 lastFallbackError = error
                 continue
             } catch {
@@ -106,7 +114,7 @@ final class ClaudeProvider: ProviderRuntime {
             // blank — log it for diagnosis and surface a provider header warning (the amber triangle, like
             // Z.ai's "no coding plan" notice) telling the user a re-login restores them. The ccusage spend
             // tiles below are unaffected and still load.
-            AppLog.warn(LogTag.plugin("claude"), "live usage unavailable: credential lacks the user:profile scope (inference-only token); re-login with `claude` to restore session/weekly limits")
+            AppLog.warn(LogTag.plugin(provider.id), "live usage unavailable: credential lacks the user:profile scope (inference-only token); re-login with `claude` to restore session/weekly limits")
             warning = ClaudeUsageMapper.missingProfileScopeWarning
         case .inferenceOnlyToken:
             // An explicit CLAUDE_CODE_OAUTH_TOKEN is inference-only by design; nothing to fetch and nothing
@@ -127,7 +135,7 @@ final class ClaudeProvider: ProviderRuntime {
         // Inside an active rate-limit cooldown, skip the live call and serve the last-good usage so a
         // constantly-limited endpoint doesn't blank the dashboard (and we don't pile on more 429s).
         if let until = rateLimitedUntil, now() < until {
-            AppLog.info(LogTag.plugin("claude"), "rate-limited (cooldown active, serving \(lastGoodUsage == nil ? "badge" : "last-good usage"))")
+            AppLog.info(LogTag.plugin(provider.id), "rate-limited (cooldown active, serving \(lastGoodUsage == nil ? "badge" : "last-good usage"))")
             return rateLimitedSnapshot(credentials: state.oauth, retryAfterSeconds: Int(until.timeIntervalSince(now()).rounded(.up)))
         }
 
@@ -157,7 +165,7 @@ final class ClaudeProvider: ProviderRuntime {
         if response.statusCode == 429 {
             let retryAfterSeconds = ClaudeUsageMapper.parseRetryAfterSeconds(response, now: now())
             rateLimitedUntil = now().addingTimeInterval(TimeInterval(retryAfterSeconds ?? Int(Self.rateLimitCooldown)))
-            AppLog.info(LogTag.plugin("claude"), "rate-limited (serving \(lastGoodUsage == nil ? "badge" : "last-good usage"))")
+            AppLog.info(LogTag.plugin(provider.id), "rate-limited (serving \(lastGoodUsage == nil ? "badge" : "last-good usage"))")
             return rateLimitedSnapshot(credentials: working.oauth, retryAfterSeconds: retryAfterSeconds)
         }
 
@@ -180,13 +188,13 @@ final class ClaudeProvider: ProviderRuntime {
     }
 
     private func refreshAccessToken(state: inout ClaudeCredentialState, refreshToken: String) async throws -> String {
-        AppLog.info(LogTag.auth("claude"), "token refresh attempt")
+        AppLog.info(LogTag.auth(provider.id), "token refresh attempt")
         let response = try await usageClient.refreshToken(refreshToken, config: authStore.oauthConfig())
         if response.statusCode == 400 || response.statusCode == 401 {
             let body = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
             let errorCode = body?["error"] as? String ?? body?["error_description"] as? String
             if errorCode == "invalid_grant" {
-                AppLog.warn(LogTag.auth("claude"), "session expired (invalid_grant)")
+                AppLog.warn(LogTag.auth(provider.id), "session expired (invalid_grant)")
                 throw ClaudeAuthError.sessionExpired
             }
             // A 400/401 without a recognized OAuth error code isn't necessarily an expired token — it
@@ -213,9 +221,9 @@ final class ClaudeProvider: ProviderRuntime {
         do {
             try authStore.save(state)
         } catch {
-            AppLog.error(LogTag.auth("claude"), "failed to persist rotated credentials; using the refreshed token for this session only: \(error.localizedDescription)")
+            AppLog.error(LogTag.auth(provider.id), "failed to persist rotated credentials; using the refreshed token for this session only: \(error.localizedDescription)")
         }
-        AppLog.info(LogTag.auth("claude"), "token refresh ok (rotated)")
+        AppLog.info(LogTag.auth(provider.id), "token refresh ok (rotated)")
         return decoded.accessToken
     }
 

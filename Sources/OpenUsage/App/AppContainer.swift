@@ -40,12 +40,17 @@ final class AppContainer {
         // menu all read this way.
         let providers: [ProviderRuntime] = [
             ClaudeProvider(),
+            // Same provider as Claude, a second independent Claude Code login (`~/.claude-2nd`) —
+            // registered right after the primary account rather than in the alphabetical tail below,
+            // since it's a variant of Claude, not a distinct provider. See ClaudeSecondaryProvider.
+            ClaudeSecondaryProvider.make(),
             CodexProvider(),
             CursorProvider(),
             AntigravityProvider(),
             CopilotProvider(),
             DevinProvider(),
             GrokProvider(),
+            OllamaProvider(),
             OpenRouterProvider(),
             ZAIProvider()
         ]

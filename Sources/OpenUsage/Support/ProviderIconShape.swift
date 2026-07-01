@@ -93,6 +93,7 @@ enum ProviderMarks {
         case "codex": return "circle.hexagongrid"
         case "cursor": return "cube"
         case "grok": return "bolt.fill"
+        case "ollama": return "cloud"
         case "openrouter": return "point.3.connected.trianglepath.dotted"
         case "zai": return "z.signal"
         default: return "app.dashed"
