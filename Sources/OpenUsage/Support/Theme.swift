@@ -13,18 +13,26 @@ enum Theme {
     /// Hierarchical secondary tint for the provider marks.
     static let iconGray = AnyShapeStyle(.secondary)
 
-    /// Meter fill for a severity band — the macOS system palette (the battery-style traffic light),
-    /// never hand-tuned hexes, so the bars track light/dark and accessibility settings like every
-    /// other system meter. Full strength: on the opaque surface there's no glass to temper against.
+    /// Catalyst Digital brand palette (palette A, approved) for the meter severity bands — electric
+    /// cyan for a healthy meter, neon pink for the "you're over" alarm state, kept visually distinct
+    /// from the warning band so the over-limit signal still pops on-brand instead of stock red. Fixed
+    /// brand hexes rather than adaptive system colors (the prior `.systemBlue`/`.systemYellow`/
+    /// `.systemRed`), so the reskin reads identically in light and dark.
+    static let catalystPrimary = Color(hex: 0x00D9FF)
+    static let catalystWarning = Color(hex: 0xFFD60A)
+    static let catalystCritical = Color(hex: 0xFF6B9D)
+
+    /// Meter fill for a severity band. Full strength: on the opaque surface there's no glass to temper
+    /// against.
     static func meterFill(_ severity: WidgetData.MeterSeverity) -> AnyShapeStyle {
         AnyShapeStyle(meterColor(severity))
     }
 
     private static func meterColor(_ severity: WidgetData.MeterSeverity) -> Color {
         switch severity {
-        case .normal: return Color(nsColor: .systemBlue)
-        case .warning: return Color(nsColor: .systemYellow)
-        case .critical: return Color(nsColor: .systemRed)
+        case .normal: return catalystPrimary
+        case .warning: return catalystWarning
+        case .critical: return catalystCritical
         }
     }
 
@@ -106,5 +114,22 @@ private struct CardSurfaceModifier: ViewModifier {
                 .fill(Theme.traySurface)
                 .overlay { Theme.cardShape.fill(Theme.cardFill) }
         }
+    }
+}
+
+extension Color {
+    /// A `Color` from a packed `0xRRGGBB` value, full opacity — the app's one hex→Color path, so a
+    /// fixed brand color (`Theme.catalystPrimary` and friends) is never built from raw per-call math.
+    /// `MetricLine`'s `colorHex` strings stay `String` at the model boundary (so the type stays
+    /// Codable/platform-agnostic for the local HTTP API) and are a separate, string-keyed concern from
+    /// this — this initializer only backs the fixed `Theme` constants.
+    init(hex: UInt32) {
+        self.init(
+            .sRGB,
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255,
+            opacity: 1
+        )
     }
 }

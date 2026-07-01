@@ -69,7 +69,10 @@ struct ProviderSnapshot: Hashable, Sendable, Codable {
         ProviderSnapshot(
             providerID: provider.id,
             displayName: provider.displayName,
-            lines: [.badge(label: MetricLine.errorBadgeLabel, text: message, colorHex: "#EF4444")],
+            // Catalyst Digital brand pink (palette A) — matches Theme.catalystCritical, the same
+            // over-limit alarm color the meter fills use, kept as a distinct on-brand alarm color
+            // rather than stock red.
+            lines: [.badge(label: MetricLine.errorBadgeLabel, text: message, colorHex: "#FF6B9D")],
             errorCategory: category
         )
     }
