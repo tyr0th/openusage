@@ -2,9 +2,10 @@ import Foundation
 
 /// Tracks Ollama Cloud (`ollama.com`) usage. Unlike every other provider in this app, there is no
 /// documented usage API and no companion CLI/app credential to read — OpenUsage reads a browser session
-/// cookie that an external, independently-run LaunchAgent (`scripts/ollama-cookie-refresher/`) keeps
-/// fresh in Keychain, and scrapes the rendered `ollama.com/settings` page with it. See
-/// `docs/providers/ollama.md` for the full setup and the fragility trade-offs this implies.
+/// cookie that an external, independently-run cookie-refresher LaunchAgent keeps fresh in Keychain (it
+/// lives outside this app entirely, in the Catalyst `openusage` repo, not this SwiftPM tree), and scrapes
+/// the rendered `ollama.com/settings` page with it. See `docs/providers/ollama.md` for the full setup and
+/// the fragility trade-offs this implies.
 @MainActor
 final class OllamaProvider: ProviderRuntime {
     let provider = Provider(id: "ollama", displayName: "Ollama", icon: .providerMark("ollama"))
@@ -74,6 +75,15 @@ final class OllamaProvider: ProviderRuntime {
 
         let html = String(decoding: response.body, as: UTF8.self)
         let parsed = OllamaHTMLParser.parse(html)
+
+        // Defensive fallback: a 200 with no usage markers at all AND a sign-in-page giveaway means
+        // ollama.com served the sign-in page directly instead of redirecting to it — same root cause
+        // as the 302/303 case above (a stale cookie), just not surfaced via a redirect this time.
+        if parsed.sessionPercent == nil, parsed.weeklyPercent == nil, OllamaHTMLParser.looksLikeSignInPage(html) {
+            AppLog.warn(LogTag.plugin("ollama"), "settings returned 200 but body looks like a sign-in page")
+            throw OllamaUsageError.sessionExpired
+        }
+
         if parsed.sessionPercent == nil {
             AppLog.warn(LogTag.plugin("ollama"), "session usage not found in settings HTML")
         }

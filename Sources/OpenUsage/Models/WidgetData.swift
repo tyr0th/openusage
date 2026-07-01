@@ -559,6 +559,10 @@ extension WidgetData {
 
     private static let sessionWindowWidgetIDs: Set<String> = [
         "codex.session", "claude.session",
+        // Claude (Account 2) and Ollama are rolling-session-window meters too (5 hours each), so an
+        // unused window at the start of its period gets the same calm "Not started" treatment instead
+        // of reading as a live countdown against a window that hasn't actually begun.
+        "claude-2.session", "ollama.session",
         // Antigravity's three quota pools are rolling 5-hour windows too: an unused pool reports
         // `used == 0` with a reset a full period out, so it gets the same "Not started" treatment.
         "antigravity.geminiPro", "antigravity.geminiFlash", "antigravity.claude"

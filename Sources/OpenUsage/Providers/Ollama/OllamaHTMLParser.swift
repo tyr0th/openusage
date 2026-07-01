@@ -56,6 +56,19 @@ enum OllamaHTMLParser {
         return tier.prefix(1).uppercased() + tier.dropFirst()
     }
 
+    /// Defensive fallback for `OllamaProvider.probeSettings`: the legacy plugin (and this port) detect an
+    /// expired session cookie via a 302/303 redirect to sign-in, but some deployments serve the sign-in
+    /// page directly under a 200 instead of redirecting. Only meaningful when neither usage marker parsed
+    /// — a genuine settings response always carries at least the "Session usage" label, so this never
+    /// fires against a legitimate partial response. Checks generic sign-in-page giveaways rather than one
+    /// unverifiable exact string, since there's no captured real expired-session response to check this
+    /// against; revisit if a real one ever surfaces false positives/negatives.
+    static func looksLikeSignInPage(_ html: String) -> Bool {
+        let markers = ["sign in to ollama", "action=\"/signin\"", "name=\"password\""]
+        let lowered = html.lowercased()
+        return markers.contains { lowered.contains($0) }
+    }
+
     /// The substring starting at `marker`'s end, up to `length` UTF-16 characters (or the end of the
     /// string, whichever comes first). Matches the legacy plugin's `html.indexOf(marker)` + `slice`.
     private static func window(in html: String, after marker: String, length: Int) -> String? {

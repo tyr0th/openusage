@@ -46,6 +46,16 @@ final class OllamaHTMLParserTests: XCTestCase {
         let html = #"<span class="text-sm">Session usage</span><span>100% used</span>"#
         XCTAssertEqual(OllamaHTMLParser.parse(html).sessionPercent, 100)
     }
+
+    func testLooksLikeSignInPageDetectsCommonGiveaways() {
+        XCTAssertTrue(OllamaHTMLParser.looksLikeSignInPage("<h1>Sign in to Ollama</h1>"))
+        XCTAssertTrue(OllamaHTMLParser.looksLikeSignInPage(#"<form action="/signin" method="post">"#))
+        XCTAssertTrue(OllamaHTMLParser.looksLikeSignInPage(#"<input name="password" type="password">"#))
+    }
+
+    func testLooksLikeSignInPageFalseOnRealSettingsHTML() {
+        XCTAssertFalse(OllamaHTMLParser.looksLikeSignInPage(sampleSettingsHTML))
+    }
 }
 
 // MARK: - OllamaUsageMapper
@@ -147,6 +157,27 @@ final class OllamaProviderTests: XCTestCase {
             usageClient: OllamaUsageClient(
                 settingsHTTP: RoutingHTTPClient { _ in
                     HTTPResponse(statusCode: 302, headers: ["location": "/signin"], body: Data())
+                }
+            )
+        )
+
+        let snapshot = await provider.refresh()
+        XCTAssertEqual(snapshot.errorCategory, .authExpired)
+    }
+
+    /// Regression: some deployments serve the sign-in page directly under a 200 instead of a 302/303
+    /// redirect. Without the defensive check this fell through to a silent "No data" badge instead of
+    /// surfacing "session expired" — the reviewer-flagged gap this test locks in the fix for.
+    func testRefreshTreats200SignInPageAsExpiredSession() async {
+        let signInHTML = "<html><body><h1>Sign in to Ollama</h1></body></html>"
+        let provider = OllamaProvider(
+            authStore: OllamaAuthStore(
+                keychain: ServiceKeychain(values: ["ollama-session-cookie": "stale-cookie"]),
+                environment: FakeEnvironment()
+            ),
+            usageClient: OllamaUsageClient(
+                settingsHTTP: RoutingHTTPClient { _ in
+                    HTTPResponse(statusCode: 200, headers: [:], body: Data(signInHTML.utf8))
                 }
             )
         )

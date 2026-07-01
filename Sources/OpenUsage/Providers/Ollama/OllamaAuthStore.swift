@@ -3,9 +3,9 @@ import Foundation
 /// Credentials for tracking Ollama Cloud (`ollama.com`) usage. Unlike every other provider here, Ollama
 /// Cloud has no companion CLI/app that stores a long-lived local session the way `claude`/`codex`/Cursor
 /// do — so OpenUsage reads a browser session cookie that an external, independently-maintained
-/// Playwright-based LaunchAgent (`scripts/ollama-cookie-refresher/`, outside this app) keeps fresh in
-/// Keychain. That external refresher is out of scope for this app and is not rebuilt here; this auth
-/// store only reads what it leaves behind.
+/// Playwright-based LaunchAgent keeps fresh in Keychain. That refresher lives in the Catalyst `openusage`
+/// repo (`scripts/ollama-cookie-refresher/`), not this SwiftPM tree — it's out of scope for this app and
+/// is not rebuilt here; this auth store only reads what it leaves behind.
 ///
 /// Two credential kinds, tried in order:
 /// - **Session cookie** (`ollama-session-cookie` / account `catalyst`) — the primary path. It authenticates
