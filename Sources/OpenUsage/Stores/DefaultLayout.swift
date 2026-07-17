@@ -12,6 +12,9 @@ enum DefaultLayout {
         "claude.session", "claude.weekly", "claude.trend",
         "claude.extra", "claude.today", "claude.yesterday", "claude.last30",
 
+        "claude-2.session", "claude-2.weekly", "claude-2.trend",
+        "claude-2.extra", "claude-2.today", "claude-2.yesterday", "claude-2.last30",
+
         "codex.session", "codex.weekly", "codex.spark", "codex.sparkWeekly", "codex.trend",
         "codex.credits", "codex.rateLimitResets", "codex.today", "codex.yesterday", "codex.last30",
 
@@ -28,6 +31,7 @@ enum DefaultLayout {
 
         "opencode.session", "opencode.weekly", "opencode.monthly", "opencode.trend",
         "opencode.today", "opencode.yesterday", "opencode.last30",
+        "ollama.session", "ollama.weekly", "ollama.plan", "ollama.models",
 
         "openrouter.credits", "openrouter.balance",
         "openrouter.today", "openrouter.week", "openrouter.month", "openrouter.keyLimit",
@@ -55,15 +59,18 @@ enum DefaultLayout {
     ]
 
     /// Metrics pinned to the menu bar on first launch, so the app shows real numbers out of the box
-    /// instead of a lone icon. Two per provider for Antigravity, Claude, Codex, and Cursor — the
-    /// per-provider cap (`LayoutStore.maxPinsPerProvider`). Filtered to the active
-    /// registry by `LayoutStore`, like `metricIDs`.
+    /// instead of a lone icon. Two per provider for Antigravity, Claude, Codex, Cursor, and Ollama — the
+    /// per-provider cap (`LayoutStore.maxPinsPerProvider`). Ollama pins Session + Weekly so its strip
+    /// segment stacks both, matching Claude/Codex. Filtered to the active registry by `LayoutStore`, like
+    /// `metricIDs`.
     static let pinnedMetricIDs: [String] = [
         "antigravity.geminiPro", "antigravity.geminiWeekly",
         "claude.session", "claude.weekly",
+        "claude-2.session", "claude-2.weekly",
         "codex.session", "codex.weekly",
         "cursor.auto", "cursor.api",
         "copilot.premium",
+        "ollama.session", "ollama.weekly",
         "openrouter.credits",
         "zai.session", "zai.weekly"
     ]
@@ -80,6 +87,8 @@ enum DefaultLayout {
         // Claude's core meters (Session, Weekly, Extra, Usage Trend) stay above the fold; spend-history
         // rows sit below the caret. Matches every other provider's "core above, history below" shape.
         "claude.sonnet", "claude.fable", "claude.today", "claude.yesterday", "claude.last30",
+        // Claude (Account 2) mirrors the primary Claude provider's own above/below-caret split exactly.
+        "claude-2.sonnet", "claude-2.fable", "claude-2.today", "claude-2.yesterday", "claude-2.last30",
         // Codex's core Session/Weekly meters and Usage Trend stay above the fold; Spark (the optional
         // model-specific limits), credits, reset details, and spend rows sit below the caret.
         "codex.spark", "codex.sparkWeekly",
@@ -96,6 +105,9 @@ enum DefaultLayout {
         // OpenCode: the three Go caps (Session/Weekly/Monthly) and Usage Trend stay above the fold —
         // matching every other provider — with the spend tiles (Today/Yesterday/Last 30 Days) below.
         "opencode.today", "opencode.yesterday", "opencode.last30",
+        // Ollama: Session + Weekly meters stay above the fold (matches every other percent-based
+        // provider); Plan and Models are supplementary detail and sit below the caret.
+        "ollama.plan", "ollama.models",
         // OpenRouter: Credits meter + Balance stay above the fold; period spend and the per-key cap
         // sit below the caret.
         "openrouter.today", "openrouter.week", "openrouter.month", "openrouter.keyLimit",

@@ -253,6 +253,48 @@ final class SettingsMigratorTests: XCTestCase {
         XCTAssertEqual(defaults.stringArray(forKey: "openusage.enabledProviders.v1"), enabledAfterFirst)
     }
 
+    // MARK: - v3: Ollama Weekly pin
+
+    /// An existing install (schema v1) that pinned `ollama.session` gains an `ollama.weekly` companion so
+    /// its menu-bar strip stacks Session + Weekly like Claude/Codex. Existing pins are preserved.
+    func testV3AddsOllamaWeeklyToExistingSessionPin() {
+        let (defaults, domain) = makeDefaults("OllamaWeekly")
+        defer { defaults.removePersistentDomain(forName: domain) }
+        defaults.set(["claude.session", "claude.weekly", "ollama.session"], forKey: SettingsSchema.menuBarPinsKey)
+        defaults.set(1, forKey: SettingsMigrator.schemaVersionKey)  // pre-v3 install
+
+        let result = SettingsMigrator.migrate(defaults: defaults, domainName: domain)  // real shipped schema
+
+        XCTAssertEqual(result, SettingsSchema.current)
+        let pins = defaults.stringArray(forKey: SettingsSchema.menuBarPinsKey) ?? []
+        XCTAssertTrue(pins.contains("ollama.weekly"), "session pin gains a weekly companion")
+        XCTAssertTrue(pins.contains("ollama.session"), "existing pin preserved")
+        XCTAssertTrue(pins.contains("claude.session") && pins.contains("claude.weekly"), "other providers untouched")
+        XCTAssertEqual(pins.filter { $0.hasPrefix("ollama.") }.count, 2, "respects the 2-pin Ollama cap")
+    }
+
+    /// The v3 step is idempotent (already has weekly → no duplicate) and cap-safe (Ollama already at two
+    /// pins → no add), and it never resurrects Ollama pins for an install that unpinned Session.
+    func testV3IsIdempotentCapSafeAndScoped() {
+        // Run the real v3 step in isolation so each case is independent of the schema-version gate.
+        let step = SettingsSchema.migrations.first { $0.version == 3 }!
+
+        func pinsAfter(_ input: [String]) -> [String] {
+            let (defaults, domain) = makeDefaults("V3-\(UUID().uuidString)")
+            defer { defaults.removePersistentDomain(forName: domain) }
+            defaults.set(input, forKey: SettingsSchema.menuBarPinsKey)
+            try? step.migrate(defaults)
+            return defaults.stringArray(forKey: SettingsSchema.menuBarPinsKey) ?? []
+        }
+
+        // Already has weekly: unchanged (no duplicate).
+        XCTAssertEqual(pinsAfter(["ollama.session", "ollama.weekly"]).filter { $0.hasPrefix("ollama.") }.count, 2)
+        // Ollama already at the 2-pin cap without weekly: don't exceed it.
+        XCTAssertFalse(pinsAfter(["ollama.session", "ollama.plan"]).contains("ollama.weekly"))
+        // Session not pinned: nothing to companion, don't resurrect Ollama pins.
+        XCTAssertFalse(pinsAfter(["claude.session"]).contains("ollama.weekly"))
+    }
+
     // MARK: - Schema integrity
 
     /// Guards against editing the migration list without bumping `current` (or vice versa): every

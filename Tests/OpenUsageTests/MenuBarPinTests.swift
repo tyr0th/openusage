@@ -134,6 +134,25 @@ final class MenuBarPinTests: XCTestCase {
         XCTAssertFalse(store.isPinned("ghost.metric"))
     }
 
+    /// Ollama pins Session + Weekly by default, like Claude/Codex, so its menu-bar strip segment stacks
+    /// both instead of showing only Session. Within the 2-per-provider cap.
+    func testDefaultLayoutPinsOllamaSessionAndWeekly() {
+        XCTAssertTrue(DefaultLayout.pinnedMetricIDs.contains("ollama.session"))
+        XCTAssertTrue(DefaultLayout.pinnedMetricIDs.contains("ollama.weekly"))
+        let ollamaPins = DefaultLayout.pinnedMetricIDs.filter { $0.hasPrefix("ollama.") }
+        XCTAssertEqual(ollamaPins.count, LayoutStore.maxPinsPerProvider, "stays within the per-provider pin cap")
+    }
+
+    /// `SettingsMigrator`'s v2 step re-derives the pin cap as a hardcoded `< 2` (it can't reach
+    /// `LayoutStore.maxPinsPerProvider` from a `@Sendable` migration closure without crossing the
+    /// MainActor boundary — see the comment above that check). This test guards the duplication:
+    /// if the cap is ever bumped on `LayoutStore` without updating the migration's hardcoded
+    /// literal, this assertion fails loudly instead of the migration silently under- or
+    /// over-capping Ollama pins on existing installs.
+    func testMaxPinsPerProviderMatchesSettingsMigratorHardcodedCap() {
+        XCTAssertEqual(LayoutStore.maxPinsPerProvider, 2, "SettingsMigrator's v2 step hardcodes this cap as `< 2`; update both together")
+    }
+
     // MARK: - Fixtures
 
     private func makeStore(_ name: String) -> LayoutStore {

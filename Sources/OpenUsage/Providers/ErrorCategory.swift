@@ -241,3 +241,23 @@ extension AntigravityError: CategorizedError {
         }
     }
 }
+
+extension OllamaAuthError: CategorizedError {
+    var errorCategory: ErrorCategory {
+        switch self {
+        case .notSignedIn: .notLoggedIn
+        }
+    }
+}
+
+extension OllamaUsageError: CategorizedError {
+    var errorCategory: ErrorCategory {
+        switch self {
+        case .sessionExpired: .authExpired
+        case .requestFailed(let status): ErrorCategory.http(status)
+        case .connectionFailed: .network
+        case .invalidResponse: .decoding
+        case .invalidKey: .authInvalid
+        }
+    }
+}

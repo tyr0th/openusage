@@ -18,7 +18,7 @@ struct SettingsMigration: Sendable {
 enum SettingsSchema {
     /// Current schema version. Keep equal to the highest migration `version` below (or the baseline when
     /// there are none). This is NOT the app version — bump it only alongside a migration you add.
-    static let current = 2
+    static let current = 3
 
     /// The provider IDs that existed when the v2 migration shipped, frozen forever. A migration is a
     /// point-in-time transform: any future build with more providers also contains this migration, so a
@@ -27,6 +27,11 @@ enum SettingsSchema {
     static let v2ProviderIDs = [
         "antigravity", "claude", "codex", "copilot", "cursor", "devin", "grok", "openrouter", "zai"
     ]
+
+    /// Persisted menu-bar pins key — must match `LayoutStore`'s (`storageKey + ".menuBarPins"`, with the
+    /// default `storageKey` of `openusage.layout.v1`). Stored as a plain string array; pin *order* is
+    /// derived from the metric order at render time, so the array order here doesn't matter.
+    static let menuBarPinsKey = "openusage.layout.v1.menuBarPins"
 
     /// Ordered migrations, each taking the domain one version higher. v1 is the baseline — the settings
     /// shape at the moment this system replaced the beta-era "wipe on every update" behavior — so it
@@ -49,6 +54,20 @@ enum SettingsSchema {
             if defaults.stringArray(forKey: "openusage.knownProviders.v1") == nil {
                 defaults.set(v2ProviderIDs, forKey: "openusage.knownProviders.v1")
             }
+        },
+        // v3 — pin `ollama.weekly` next to an already-pinned `ollama.session` so the Ollama strip segment
+        // stacks Session + Weekly like Claude/Codex. `DefaultLayout` already seeds both for fresh
+        // installs; this reaches the persisted pin set of an existing install (which the defaults never
+        // touch). Idempotent and cap-safe: skips installs that never pinned Session, already have Weekly,
+        // or sit at the 2-pin Ollama cap. Never removes or reorders existing pins.
+        SettingsMigration(version: 3) { defaults in
+            // No saved pins → fresh/unpinned install; `LayoutStore` seeds the current defaults itself.
+            guard let pins = defaults.stringArray(forKey: menuBarPinsKey) else { return }
+            guard pins.contains("ollama.session"), !pins.contains("ollama.weekly") else { return }
+            // Mirror LayoutStore.maxPinsPerProvider (2) without crossing the MainActor boundary.
+            let ollamaPinCount = pins.count { $0.hasPrefix("ollama.") }
+            guard ollamaPinCount < 2 else { return }
+            defaults.set(pins + ["ollama.weekly"], forKey: menuBarPinsKey)
         }
     ]
 }
