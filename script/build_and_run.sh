@@ -211,7 +211,18 @@ else
 fi
 
 launch_app() {
-  /usr/bin/open -n "$APP_BUNDLE"
+  # Scrub Claude Code session env before launching. When this script is run from inside a Claude Code
+  # session, CLAUDE_CONFIG_DIR (and friends) are exported in the shell and `open -n` would leak them into
+  # OpenUsage's process env. The primary Claude provider (ClaudeAuthStore via ProcessEnvironmentReader)
+  # honors CLAUDE_CONFIG_DIR to locate credentials — a leaked value (e.g. a second account's config dir)
+  # cross-wires the primary "Claude" card to the wrong account. Launch with these unset so the app always
+  # resolves the real default Claude config.
+  env -u CLAUDE_CONFIG_DIR \
+      -u CLAUDE_CODE_SESSION_ID \
+      -u CLAUDE_CODE_ENTRYPOINT \
+      -u CLAUDE_CODE_CHILD_SESSION \
+      -u CLAUDE_CODE_DISABLE_COMPANION \
+      /usr/bin/open -n "$APP_BUNDLE"
 }
 
 case "$MODE" in

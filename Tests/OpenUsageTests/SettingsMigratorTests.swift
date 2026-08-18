@@ -295,6 +295,126 @@ final class SettingsMigratorTests: XCTestCase {
         XCTAssertFalse(pinsAfter(["claude.session"]).contains("ollama.weekly"))
     }
 
+    // MARK: - v4: retire the Codex Session tile
+
+    /// An existing install that has `codex.session` placed (enabled), listed On Demand, and pinned gets it
+    /// stripped from all three, while `codex.weekly` and other providers' Session tiles (`claude.session`)
+    /// are left exactly as they were.
+    func testV4RemovesCodexSessionFromExistingLayout() {
+        let (defaults, domain) = makeDefaults("V4Codex")
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        let placed: [[String: Any]] = [
+            ["id": UUID().uuidString, "descriptorID": "claude.session"],
+            ["id": UUID().uuidString, "descriptorID": "codex.session"],
+            ["id": UUID().uuidString, "descriptorID": "codex.weekly"]
+        ]
+        defaults.set(try! JSONSerialization.data(withJSONObject: placed), forKey: "openusage.layout.v1")
+        defaults.set(["codex.session", "codex.credits"], forKey: "openusage.layout.v1.expandedMetrics")
+        defaults.set(["codex.session", "codex.weekly", "claude.session"], forKey: SettingsSchema.menuBarPinsKey)
+        defaults.set(3, forKey: SettingsMigrator.schemaVersionKey)  // pre-v4 install
+
+        let result = SettingsMigrator.migrate(defaults: defaults, domainName: domain)  // real shipped schema
+
+        XCTAssertEqual(result, SettingsSchema.current)
+
+        let placedIDs = decodedDescriptorIDs(defaults, key: "openusage.layout.v1")
+        XCTAssertFalse(placedIDs.contains("codex.session"), "retired Session tile removed from enabled set")
+        XCTAssertTrue(placedIDs.contains("codex.weekly"), "Codex Weekly stays enabled")
+        XCTAssertTrue(placedIDs.contains("claude.session"), "another provider's Session is untouched")
+
+        let expanded = defaults.stringArray(forKey: "openusage.layout.v1.expandedMetrics") ?? []
+        XCTAssertEqual(expanded, ["codex.credits"], "Session dropped from On Demand, others kept")
+
+        let pins = defaults.stringArray(forKey: SettingsSchema.menuBarPinsKey) ?? []
+        XCTAssertFalse(pins.contains("codex.session"), "retired Session tile unpinned")
+        XCTAssertTrue(pins.contains("codex.weekly"), "Codex Weekly pin preserved")
+        XCTAssertTrue(pins.contains("claude.session"), "another provider's Session pin preserved")
+    }
+
+    /// The v4 step is idempotent (a layout without `codex.session` is unchanged) and never touches a
+    /// look-alike ID like `claude.session`. Run in isolation so it's independent of the version gate.
+    func testV4IsIdempotentAndScoped() {
+        let step = SettingsSchema.migrations.first { $0.version == 4 }!
+        let (defaults, domain) = makeDefaults("V4Idempotent")
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        let placed: [[String: Any]] = [["id": UUID().uuidString, "descriptorID": "claude.session"]]
+        defaults.set(try! JSONSerialization.data(withJSONObject: placed), forKey: "openusage.layout.v1")
+        defaults.set(["claude.session"], forKey: "openusage.layout.v1.expandedMetrics")
+        defaults.set(["claude.session", "codex.weekly"], forKey: SettingsSchema.menuBarPinsKey)
+
+        try? step.migrate(defaults)  // nothing to strip
+        try? step.migrate(defaults)  // re-run: still nothing
+
+        XCTAssertEqual(decodedDescriptorIDs(defaults, key: "openusage.layout.v1"), ["claude.session"])
+        XCTAssertEqual(defaults.stringArray(forKey: "openusage.layout.v1.expandedMetrics"), ["claude.session"])
+        XCTAssertEqual(
+            defaults.stringArray(forKey: SettingsSchema.menuBarPinsKey),
+            ["claude.session", "codex.weekly"]
+        )
+    }
+
+    /// Defense-in-depth idempotency: unlike `testV4IsIdempotentAndScoped` (which re-runs on already-clean
+    /// input), this starts with `codex.session` actually PRESENT on all three surfaces. The first run
+    /// strips it (keeping `codex.weekly` + `claude.session`); a SECOND run of the same step is byte-stable
+    /// and does not throw — proving the transform is a true fixed point, not just a no-op on clean input.
+    func testV4IdempotentAfterActualStrip() {
+        let step = SettingsSchema.migrations.first { $0.version == 4 }!
+        let (defaults, domain) = makeDefaults("V4IdempotentAfterStrip")
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        let placed: [[String: Any]] = [
+            ["id": UUID().uuidString, "descriptorID": "claude.session"],
+            ["id": UUID().uuidString, "descriptorID": "codex.session"],
+            ["id": UUID().uuidString, "descriptorID": "codex.weekly"]
+        ]
+        defaults.set(try! JSONSerialization.data(withJSONObject: placed), forKey: "openusage.layout.v1")
+        defaults.set(["codex.session", "codex.weekly", "claude.session"], forKey: "openusage.layout.v1.expandedMetrics")
+        defaults.set(["codex.session", "codex.weekly", "claude.session"], forKey: SettingsSchema.menuBarPinsKey)
+
+        // First run: `codex.session` is stripped from all three surfaces; the rest keeps order and stays.
+        try? step.migrate(defaults)
+
+        XCTAssertEqual(decodedDescriptorIDs(defaults, key: "openusage.layout.v1"), ["claude.session", "codex.weekly"])
+        XCTAssertEqual(defaults.stringArray(forKey: "openusage.layout.v1.expandedMetrics"), ["codex.weekly", "claude.session"])
+        XCTAssertEqual(defaults.stringArray(forKey: SettingsSchema.menuBarPinsKey), ["codex.weekly", "claude.session"])
+
+        // Snapshot the stripped state, then re-run the SAME step: it must not throw and must change nothing.
+        let placedAfterFirst = defaults.data(forKey: "openusage.layout.v1")
+        let expandedAfterFirst = defaults.stringArray(forKey: "openusage.layout.v1.expandedMetrics")
+        let pinsAfterFirst = defaults.stringArray(forKey: SettingsSchema.menuBarPinsKey)
+
+        XCTAssertNoThrow(try step.migrate(defaults))  // second run: nothing further to strip
+
+        XCTAssertEqual(defaults.data(forKey: "openusage.layout.v1"), placedAfterFirst, "placed layout byte-stable on re-run")
+        XCTAssertEqual(defaults.stringArray(forKey: "openusage.layout.v1.expandedMetrics"), expandedAfterFirst)
+        XCTAssertEqual(defaults.stringArray(forKey: SettingsSchema.menuBarPinsKey), pinsAfterFirst)
+        XCTAssertFalse(decodedDescriptorIDs(defaults, key: "openusage.layout.v1").contains("codex.session"), "still gone")
+        XCTAssertTrue(decodedDescriptorIDs(defaults, key: "openusage.layout.v1").contains("codex.weekly"), "Codex Weekly retained")
+        XCTAssertTrue(decodedDescriptorIDs(defaults, key: "openusage.layout.v1").contains("claude.session"), "Claude Session retained")
+    }
+
+    /// The default layout retires `codex.session` but keeps `codex.weekly` (which stays Always Visible so
+    /// the Codex caret still appears), and leaves every other provider's Session tile in place.
+    func testV4DefaultLayoutRetiresCodexSessionOnly() {
+        XCTAssertFalse(DefaultLayout.metricIDs.contains("codex.session"), "Codex Session no longer enabled by default")
+        XCTAssertTrue(DefaultLayout.metricIDs.contains("codex.weekly"), "Codex Weekly still enabled by default")
+        XCTAssertFalse(DefaultLayout.pinnedMetricIDs.contains("codex.session"), "Codex Session no longer pinned")
+        XCTAssertTrue(DefaultLayout.pinnedMetricIDs.contains("codex.weekly"), "Codex Weekly still pinned")
+        // Weekly is Always Visible (absent from the On Demand set), so the provider renders with a caret.
+        XCTAssertFalse(DefaultLayout.expandedMetricIDs.contains("codex.weekly"), "Codex Weekly stays above the fold")
+        // Other providers keep their own Session tile.
+        XCTAssertTrue(DefaultLayout.metricIDs.contains("claude.session"), "Claude Session untouched")
+    }
+
+    /// A helper decoding the placed-widget descriptor IDs the migration writes back.
+    private func decodedDescriptorIDs(_ defaults: UserDefaults, key: String) -> [String] {
+        guard let data = defaults.data(forKey: key),
+              let raw = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return [] }
+        return raw.compactMap { $0["descriptorID"] as? String }
+    }
+
     // MARK: - Schema integrity
 
     /// Guards against editing the migration list without bumping `current` (or vice versa): every

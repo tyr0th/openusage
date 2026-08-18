@@ -35,11 +35,23 @@ enum OllamaHTMLParser {
         return value
     }
 
-    /// e.g. `<div ... data-time="2026-04-27T02:00:00Z" ...></div>` — a wider window than `percent` since
-    /// the reset element sits further from the label.
+    /// The reset element is a `local-time` div, e.g.
+    /// `<div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-07-27T00:00:00Z" > Resets in 2 days. </div>`.
+    /// Ollama's `settings` redesign now inserts a large `data-usage-meter` hover-bubble block between each
+    /// `% used` label and its reset element, so the reset `data-time` sits far from the marker: measured
+    /// against the live page it's ~2,893 chars after the "Session usage" marker and ~6,267 chars after the
+    /// "Weekly usage" marker — well past the old 600-char window, which is why resets were coming back nil
+    /// and the UI fell back to the hardcoded period durations. Widen the window to 8,000 to safely clear the
+    /// weekly offset. There are exactly two `data-time` attributes on the page and they appear in document
+    /// order (session's precedes the Weekly marker; weekly's follows it), so a first-match-after-marker scan
+    /// stays correct. Anchor on the `local-time"` reset element specifically so a future `data-time` added
+    /// elsewhere in the window can't hijack the match; fall back to the generic attribute only if the
+    /// anchored form misses.
     private static func resetDate(in html: String, after marker: String) -> Date? {
-        guard let window = window(in: html, after: marker, length: 600) else { return nil }
-        guard let raw = firstMatch(pattern: #"data-time="([^"]+)""#, in: window) else { return nil }
+        guard let window = window(in: html, after: marker, length: 8000) else { return nil }
+        let raw = firstMatch(pattern: #"local-time"\s+data-time="([^"]+)""#, in: window)
+            ?? firstMatch(pattern: #"data-time="([^"]+)""#, in: window)
+        guard let raw else { return nil }
         return OpenUsageISO8601.date(from: raw)
     }
 

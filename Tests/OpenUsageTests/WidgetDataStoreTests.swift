@@ -224,6 +224,121 @@ final class WidgetDataStoreTests: XCTestCase {
         XCTAssertEqual(requests.boundedSubtitle, "Resets in 30d 0h")
     }
 
+    func testCodexSessionTileReadsNoDataWhenApiOmitsSessionWindow() async throws {
+        // Regression: when the user is pegged at their weekly cap the OpenAI usage API returns only the
+        // weekly window (moved into `primary_window`, `secondary_window: null`), so the mapper correctly
+        // produces a Weekly line and NO Session line. The pinned/declared `codex.session` tile must then
+        // read the explicit "No data" placeholder — never a blank tile, never a fabricated 0%.
+        let codex = CodexProvider()
+        let provider = codex.provider
+        let session = codex.widgetDescriptors.first { $0.id == "codex.session" }!
+        let weekly = codex.widgetDescriptors.first { $0.id == "codex.weekly" }!
+
+        // Weekly-only payload captured from a real weekly-capped OpenAI usage response (100% weekly, no 5h session window).
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let body = Data("""
+        {
+          "plan_type": "plus",
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": 100,
+              "limit_window_seconds": 604800,
+              "reset_after_seconds": 585160,
+              "reset_at": \(Int(now.timeIntervalSince1970) + 585160)
+            },
+            "secondary_window": null
+          }
+        }
+        """.utf8)
+        let mapped = try CodexUsageMapper.mapUsageResponse(
+            HTTPResponse(statusCode: 200, headers: [:], body: body), now: now
+        )
+        // Sanity: the mapper produced Weekly but no Session line (classification is left untouched).
+        XCTAssertTrue(mapped.lines.contains { $0.label == "Weekly" })
+        XCTAssertFalse(mapped.lines.contains { $0.label == "Session" })
+
+        let runtime = TestProviderRuntime(
+            provider: provider,
+            descriptors: [session, weekly],
+            snapshot: ProviderSnapshot(providerID: provider.id, displayName: provider.displayName, lines: mapped.lines)
+        )
+        let defaults = makeUserDefaults("codex-session-no-data")
+        let store = WidgetDataStore(
+            registry: WidgetRegistry(providers: [provider], descriptors: [session, weekly]),
+            providers: [runtime],
+            cache: ProviderSnapshotCache(userDefaults: defaults, storageKey: "snapshots", ttl: 600, now: { now }),
+            defaults: defaults
+        )
+        await store.refreshAll()
+        store.meterStyle = .used
+
+        // (a) No session window → the Session tile reads the explicit "No data" placeholder, not blank/0%.
+        let sessionTile = store.data(for: session)
+        XCTAssertFalse(sessionTile.hasData)
+        XCTAssertEqual(sessionTile.headline, WidgetData.noDataHeadline)   // no-data placeholder, never a fabricated "0%"
+        XCTAssertEqual(sessionTile.boundedTrailingText(), WidgetData.noDataSubtitle) // no-data subtitle
+        XCTAssertEqual(sessionTile.valueText, WidgetData.noDataHeadline)  // menu bar never leaks a placeholder %
+        XCTAssertNotEqual(sessionTile.valueText, "0%")
+
+        // Weekly still renders its real percentage — the no-data placeholder is scoped to the Session tile.
+        let weeklyTile = store.data(for: weekly)
+        XCTAssertTrue(weeklyTile.hasData)
+        XCTAssertEqual(weeklyTile.used, 100)
+        XCTAssertEqual(weeklyTile.valueText, "100%")   // .used meter style: 100% used
+    }
+
+    func testCodexSessionTileRendersRealPercentWhenSessionWindowPresent() async throws {
+        // No-regression counterpart: a payload WITH a ~5h session window renders the real Session
+        // percentage normally — the no-data placeholder must never mask live session data.
+        let codex = CodexProvider()
+        let provider = codex.provider
+        let session = codex.widgetDescriptors.first { $0.id == "codex.session" }!
+
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let body = Data("""
+        {
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": 37,
+              "limit_window_seconds": 18000,
+              "reset_after_seconds": 9000,
+              "reset_at": \(Int(now.timeIntervalSince1970) + 9000)
+            },
+            "secondary_window": {
+              "used_percent": 12,
+              "limit_window_seconds": 604800,
+              "reset_after_seconds": 60
+            }
+          }
+        }
+        """.utf8)
+        let mapped = try CodexUsageMapper.mapUsageResponse(
+            HTTPResponse(statusCode: 200, headers: [:], body: body), now: now
+        )
+        XCTAssertTrue(mapped.lines.contains { $0.label == "Session" })
+
+        let runtime = TestProviderRuntime(
+            provider: provider,
+            descriptors: [session],
+            snapshot: ProviderSnapshot(providerID: provider.id, displayName: provider.displayName, lines: mapped.lines)
+        )
+        let defaults = makeUserDefaults("codex-session-present")
+        let store = WidgetDataStore(
+            registry: WidgetRegistry(providers: [provider], descriptors: [session]),
+            providers: [runtime],
+            cache: ProviderSnapshotCache(userDefaults: defaults, storageKey: "snapshots", ttl: 600, now: { now }),
+            defaults: defaults
+        )
+        await store.refreshAll()
+
+        store.meterStyle = .used
+        let sessionTile = store.data(for: session)
+        XCTAssertTrue(sessionTile.hasData)
+        XCTAssertEqual(sessionTile.used, 37)
+        XCTAssertEqual(sessionTile.valueText, "37%")
+        XCTAssertNotEqual(sessionTile.headline, WidgetData.noDataHeadline)
+    }
+
     func testCreditsRenderDollarAndCountCombinedInvariantToMeterStyle() async {
         // Codex flex credits show the dollar value and the raw count combined ("$40.00 · 1,000
         // credits"), invariant to the Used/Left meter style, while the dollar value drives the menu

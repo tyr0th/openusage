@@ -18,7 +18,7 @@ struct SettingsMigration: Sendable {
 enum SettingsSchema {
     /// Current schema version. Keep equal to the highest migration `version` below (or the baseline when
     /// there are none). This is NOT the app version — bump it only alongside a migration you add.
-    static let current = 3
+    static let current = 4
 
     /// The provider IDs that existed when the v2 migration shipped, frozen forever. A migration is a
     /// point-in-time transform: any future build with more providers also contains this migration, so a
@@ -68,6 +68,40 @@ enum SettingsSchema {
             let ollamaPinCount = pins.count { $0.hasPrefix("ollama.") }
             guard ollamaPinCount < 2 else { return }
             defaults.set(pins + ["ollama.weekly"], forKey: menuBarPinsKey)
+        },
+        // v4 — retire the Codex Session tile from existing layouts. OpenAI removed Codex's 5-hour limit
+        // on 2026-07-12, so `codex.session` is permanently empty ("No data"). Retirement is enforced by
+        // `codex.session`'s ABSENCE from `DefaultLayout.metricIDs`: `LayoutBootstrap.seedNewDefaultMetrics`
+        // only ever adds metrics drawn from the current `metricIDs`, so a removed ID can never be re-seeded
+        // — regardless of the frozen baseline, and for fresh AND existing installs. (`DefaultLayout`'s
+        // `migrationBaselineMetricIDs` still lists `codex.session` and is deliberately left untouched: it's
+        // a point-in-time snapshot that must never be edited.) This step only strips the already-persisted
+        // layout of an EXISTING install (which the defaults never touch): the placed/enabled widgets, the
+        // On-Demand membership set, and the menu-bar pins. Idempotent (a re-run finds nothing to strip) and
+        // tightly scoped to `codex.session` — `codex.weekly` and every other provider's Session (e.g.
+        // `claude.session`) are left untouched. Uses `LayoutStore`'s default storage key
+        // (`openusage.layout.v1`); its sibling keys derive from it.
+        SettingsMigration(version: 4) { defaults in
+            let retiredMetric = "codex.session"
+            let layoutKey = "openusage.layout.v1"
+
+            // Enabled/placed widgets are a JSON-encoded array of `{ id, descriptorID }`. Filter by
+            // `descriptorID` through untyped JSON so this frozen transform doesn't couple to the live
+            // `PlacedWidget` shape; a decode miss leaves the value untouched (never destructive).
+            if let data = defaults.data(forKey: layoutKey),
+               let raw = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+                let filtered = raw.filter { ($0["descriptorID"] as? String) != retiredMetric }
+                if filtered.count != raw.count {
+                    defaults.set(try JSONSerialization.data(withJSONObject: filtered), forKey: layoutKey)
+                }
+            }
+
+            // On-Demand (expanded) membership and menu-bar pins are plain string arrays.
+            for key in ["\(layoutKey).expandedMetrics", menuBarPinsKey] {
+                if let ids = defaults.stringArray(forKey: key), ids.contains(retiredMetric) {
+                    defaults.set(ids.filter { $0 != retiredMetric }, forKey: key)
+                }
+            }
         }
     ]
 }

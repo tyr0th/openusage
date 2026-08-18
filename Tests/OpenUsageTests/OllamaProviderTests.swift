@@ -4,17 +4,41 @@ import XCTest
 // MARK: - OllamaHTMLParser
 
 final class OllamaHTMLParserTests: XCTestCase {
+    /// Synthetic stand-ins for the `data-usage-meter` hover-bubble block that Ollama's redesigned
+    /// `settings` page now inserts between each `% used` label and its reset element. No real account
+    /// HTML/PII. Their only job is to push the reset `data-time` far past the old 600-char window so the
+    /// fixture reflects the real page's structure (which the pre-fix fixture did not, letting the bug ship).
+    /// The two cards get DIFFERENT sizes to mirror the measured live page: the Session reset sits ~2,893
+    /// chars past its marker and the Weekly reset ~6,267 — so the Weekly filler is roughly double, letting
+    /// the test actually exercise the far end of the 8,000-char window. Both deliberately contain NO
+    /// `data-time` attribute of their own.
+    private static func usageMeter(cells: Int) -> String {
+        let cell = #"<div class="data-usage-meter-cell h-2 w-2 rounded-sm bg-neutral-200" role="presentation"></div>"#
+        return #"<div class="data-usage-meter absolute z-10 hidden group-hover:block rounded-lg border p-3 shadow">"#
+            + String(repeating: cell, count: cells)
+            + "</div>"
+    }
+    // ~2,900 chars — Session reset lands just past its marker (~2,893 on the live page).
+    private static let sessionUsageMeterFiller = usageMeter(cells: 30)
+    // ~6,400 chars — Weekly reset lands past ~6,300, mirroring the ~6,267 live offset and stressing the
+    // widened window's far end (a 600- or 3,000-char window would miss it).
+    private static let weeklyUsageMeterFiller = usageMeter(cells: 66)
+
+    // Real reset markup is a `local-time` div, e.g.
+    // `<div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-07-24T23:00:00Z" > Resets in 1 hour. </div>`
     private let sampleSettingsHTML = """
     <html><body>
     <div class="usage-card">
       <span class="text-sm">Session usage</span>
       <span class="text-sm">14.6% used</span>
-      <div class="reset" data-time="2026-04-27T02:00:00Z"></div>
+      \(OllamaHTMLParserTests.sessionUsageMeterFiller)
+      <div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-04-27T02:00:00Z" > Resets in 1 hour. </div>
     </div>
     <div class="usage-card">
       <span class="text-sm">Weekly usage</span>
       <span class="text-sm">62.3% used</span>
-      <div class="reset" data-time="2026-05-01T00:00:00Z"></div>
+      \(OllamaHTMLParserTests.weeklyUsageMeterFiller)
+      <div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-05-01T00:00:00Z" > Resets in 2 days. </div>
     </div>
     <div class="cloud-usage">Cloud Usage
       <span
@@ -32,6 +56,36 @@ final class OllamaHTMLParserTests: XCTestCase {
         XCTAssertEqual(parsed.sessionResetsAt, OpenUsageISO8601.date(from: "2026-04-27T02:00:00Z"))
         XCTAssertEqual(parsed.weeklyResetsAt, OpenUsageISO8601.date(from: "2026-05-01T00:00:00Z"))
         XCTAssertEqual(parsed.plan, "Pro")
+    }
+
+    /// Regression for the reset-time parsing bug: the redesigned `settings` page pushes each reset element
+    /// ~3,000+ chars past its `% used` label (behind the `data-usage-meter` tooltip). The old 600-char
+    /// window missed both `data-time`s, so `resetsAt` came back nil and the UI showed the hardcoded 5h/7d
+    /// fallback. This asserts both resets parse to their own distinct instants and that Session does NOT
+    /// bleed into Weekly's `data-time`.
+    func testParsesResetTimesPastUsageMeterBlock() {
+        // Guard the fixture actually reproduces the real page: the Session reset sits well past the old
+        // 600-char window, and the Weekly reset sits past ~6,300 — matching the live ~6,267 offset. This
+        // is what makes the test bite the widened 8,000-char window (a 600- or 3,000-char window fails it).
+        let sessionMarkerEnd = sampleSettingsHTML.range(of: "Session usage</span>")!.upperBound
+        let sessionResetStart = sampleSettingsHTML.range(of: "data-time=\"2026-04-27T02:00:00Z\"")!.lowerBound
+        let sessionOffset = sampleSettingsHTML.distance(from: sessionMarkerEnd, to: sessionResetStart)
+        XCTAssertGreaterThan(sessionOffset, 600, "Session reset must sit past the old 600-char window")
+
+        let weeklyMarkerEnd = sampleSettingsHTML.range(of: "Weekly usage</span>")!.upperBound
+        let weeklyResetStart = sampleSettingsHTML.range(of: "data-time=\"2026-05-01T00:00:00Z\"")!.lowerBound
+        let weeklyOffset = sampleSettingsHTML.distance(from: weeklyMarkerEnd, to: weeklyResetStart)
+        XCTAssertGreaterThan(weeklyOffset, 6000, "Weekly reset must sit past ~6,000 chars, mirroring the live page")
+
+        let parsed = OllamaHTMLParser.parse(sampleSettingsHTML)
+        let session = OpenUsageISO8601.date(from: "2026-04-27T02:00:00Z")
+        let weekly = OpenUsageISO8601.date(from: "2026-05-01T00:00:00Z")
+        XCTAssertEqual(parsed.sessionResetsAt, session)
+        XCTAssertEqual(parsed.weeklyResetsAt, weekly)
+        XCTAssertNotNil(parsed.sessionResetsAt)
+        XCTAssertNotNil(parsed.weeklyResetsAt)
+        // Session must resolve to its own reset, not accidentally pick up Weekly's later data-time.
+        XCTAssertNotEqual(parsed.sessionResetsAt, weekly)
     }
 
     func testMissingMarkersYieldNilRatherThanCrash() {

@@ -109,6 +109,11 @@ final class LayoutStore {
     private let defaultExpandedMetricIDs: [String]
     var defaultExpandedOnEnableIDs: Set<String>
     let isProviderEnabled: @MainActor (String) -> Bool
+    /// Fork-local: when true (the app default), dollar-denominated and "Extra Usage" metrics are hidden
+    /// from every rendered widget list (see `WidgetDescriptor.isSuppressedFromUI` and the display seams
+    /// in `LayoutStore+Customization`). Tests that exercise the layout engine against the full metric
+    /// set pass `false` so their mechanics aren't masked by suppression; production never overrides it.
+    let suppressesUIMetrics: Bool
 
     init(
         registry: WidgetRegistry,
@@ -118,9 +123,11 @@ final class LayoutStore {
         migrationBaselineMetricIDs: [String] = DefaultLayout.migrationBaselineMetricIDs,
         defaultPinnedMetricIDs: [String] = DefaultLayout.pinnedMetricIDs,
         defaultExpandedMetricIDs: [String] = DefaultLayout.expandedMetricIDs,
-        isProviderEnabled: @escaping @MainActor (String) -> Bool = { _ in true }
+        isProviderEnabled: @escaping @MainActor (String) -> Bool = { _ in true },
+        suppressUIMetrics: Bool = true
     ) {
         self.registry = registry
+        self.suppressesUIMetrics = suppressUIMetrics
         let persistence = LayoutPersistence(defaults: defaults, storageKey: storageKey)
         self.persistence = persistence
         self.defaultMetricIDs = defaultMetricIDs
@@ -265,8 +272,16 @@ final class LayoutStore {
 
     func isPinned(_ descriptorID: String) -> Bool { pinnedMetricIDs.contains(descriptorID) }
 
+    /// How many of a provider's pins count against the per-provider cap. UI-suppressed pins
+    /// (dollar / "Extra Usage" tiles hidden from the strip and Customize) are excluded: they stay
+    /// persisted in `pinnedMetricIDs` — so they return if suppression is ever turned off — but a pin the
+    /// user can neither see nor unpin must not silently consume a menu-bar slot (which would deny a
+    /// visible pin via `canPin`). Matches `pinnedGroups`, which already filters suppressed ids out of the
+    /// rendered strip.
     func pinnedCount(forProvider providerID: String) -> Int {
-        pinnedMetricIDs.count { registry.descriptor(id: $0)?.providerID == providerID }
+        pinnedMetricIDs.count { id in
+            registry.descriptor(id: id)?.providerID == providerID && !isSuppressedFromUI(id)
+        }
     }
 
     /// Whether `descriptorID` can be newly pinned without breaking a cap. Already-pinned ids return

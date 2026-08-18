@@ -222,6 +222,26 @@ extension ZAIUsageError: CategorizedError {
     }
 }
 
+extension HiggsfieldAuthError: CategorizedError {
+    var errorCategory: ErrorCategory {
+        switch self {
+        case .notSignedIn: .notLoggedIn
+        case .credentialsUnreadable: .credentialAccess
+        }
+    }
+}
+
+extension HiggsfieldUsageError: CategorizedError {
+    var errorCategory: ErrorCategory {
+        switch self {
+        case .loginExpired: .authExpired
+        case .requestFailed(let status): ErrorCategory.http(status)
+        case .connectionFailed: .network
+        case .invalidResponse: .decoding
+        }
+    }
+}
+
 extension HTTPClientError: CategorizedError {
     var errorCategory: ErrorCategory {
         switch self {

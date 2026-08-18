@@ -15,7 +15,7 @@ enum DefaultLayout {
         "claude-2.session", "claude-2.weekly", "claude-2.trend",
         "claude-2.extra", "claude-2.today", "claude-2.yesterday", "claude-2.last30",
 
-        "codex.session", "codex.weekly", "codex.spark", "codex.sparkWeekly", "codex.trend",
+        "codex.weekly", "codex.spark", "codex.sparkWeekly", "codex.trend",
         "codex.credits", "codex.rateLimitResets", "codex.today", "codex.yesterday", "codex.last30",
 
         "cursor.usage", "cursor.auto", "cursor.api", "cursor.trend",
@@ -28,6 +28,10 @@ enum DefaultLayout {
 
         "grok.weekly", "grok.trend",
         "grok.payAsYouGo", "grok.today", "grok.yesterday", "grok.last30",
+
+        // Higgsfield exposes only a Credits balance and a plan (no allowance/reset in the API), so both
+        // rows stay Always Visible above the fold — neither is in expandedMetricIDs.
+        "higgsfield.credits", "higgsfield.plan",
 
         "opencode.session", "opencode.weekly", "opencode.monthly", "opencode.trend",
         "opencode.today", "opencode.yesterday", "opencode.last30",
@@ -59,15 +63,16 @@ enum DefaultLayout {
     ]
 
     /// Metrics pinned to the menu bar on first launch, so the app shows real numbers out of the box
-    /// instead of a lone icon. Two per provider for Antigravity, Claude, Codex, Cursor, and Ollama — the
-    /// per-provider cap (`LayoutStore.maxPinsPerProvider`). Ollama pins Session + Weekly so its strip
-    /// segment stacks both, matching Claude/Codex. Filtered to the active registry by `LayoutStore`, like
-    /// `metricIDs`.
+    /// instead of a lone icon. Two per provider for Antigravity, Claude, Cursor, and Ollama — the
+    /// per-provider cap (`LayoutStore.maxPinsPerProvider`). Codex pins Weekly only: OpenAI removed the
+    /// 5-hour Codex limit, so `codex.session` is permanently empty and no longer surfaced by default.
+    /// Ollama pins Session + Weekly so its strip segment stacks both, matching Claude. Filtered to the
+    /// active registry by `LayoutStore`, like `metricIDs`.
     static let pinnedMetricIDs: [String] = [
         "antigravity.geminiPro", "antigravity.geminiWeekly",
         "claude.session", "claude.weekly",
         "claude-2.session", "claude-2.weekly",
-        "codex.session", "codex.weekly",
+        "codex.weekly",
         "cursor.auto", "cursor.api",
         "copilot.premium",
         "ollama.session", "ollama.weekly",

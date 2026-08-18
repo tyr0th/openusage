@@ -112,7 +112,8 @@ final class ProviderEnablementEnforcementTests: XCTestCase {
             registry: .mock,
             defaults: makeDefaults("layout-store"),
             storageKey: "layout",
-            isProviderEnabled: { enablement.isEnabled($0) }
+            isProviderEnabled: { enablement.isEnabled($0) },
+            suppressUIMetrics: false
         )
 
         // All enabled => visiblePlaced is byte-for-byte the full placed list.

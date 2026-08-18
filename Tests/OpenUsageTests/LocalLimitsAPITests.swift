@@ -208,12 +208,19 @@ final class LocalLimitsAPITests: XCTestCase {
         }
         let expected: [String: Set<String>] = [
             "claude": ["session", "weekly", "sonnet", "fable", "extraUsage"],
+            // Claude (Account 2) is the same runtime as Claude, so it exposes the identical resource keys.
+            "claude-2": ["session", "weekly", "sonnet", "fable", "extraUsage"],
             "codex": ["session", "weekly", "spark", "sparkWeekly", "credits", "creditValue", "rateLimitResets"],
             "cursor": ["totalUsage", "autoUsage", "apiUsage", "onDemand", "requests", "credits"],
             "antigravity": ["geminiSession", "geminiWeekly", "nonGeminiSession", "nonGeminiWeekly"],
             "copilot": ["premiumCredits", "extraUsage", "orgCredits", "orgSpend", "chat", "completions"],
             "devin": ["daily", "weekly", "extraUsageBalance"],
             "grok": ["weekly"],
+            // Higgsfield and Ollama declare no bounded limit resources (Higgsfield exposes only an
+            // unbounded Credits balance + a Plan badge; Ollama's meters carry no limit descriptors), so
+            // their approved public-resource-key set is empty.
+            "higgsfield": [],
+            "ollama": [],
             "opencode": ["session", "weekly", "monthly"],
             "openrouter": ["credits", "balance", "keyLimit"],
             "zai": ["session", "weekly", "webSearches"]

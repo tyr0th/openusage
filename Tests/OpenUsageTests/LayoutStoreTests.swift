@@ -635,7 +635,7 @@ final class LayoutStoreTests: XCTestCase {
             GrokProvider(),
             CursorProvider()
         ])
-        let store = LayoutStore(registry: registry, defaults: makeDefaults("FreshCustomizeOrder"), storageKey: "layout")
+        let store = LayoutStore(registry: registry, defaults: makeDefaults("FreshCustomizeOrder"), storageKey: "layout", suppressUIMetrics: false)
 
         XCTAssertEqual(store.orderedSupportedMetrics(for: "claude").map(\.id), [
             "claude.session", "claude.weekly", "claude.sonnet", "claude.fable", "claude.extra",
@@ -668,12 +668,12 @@ final class LayoutStoreTests: XCTestCase {
             GrokProvider(),
             CursorProvider()
         ])
-        let store = LayoutStore(registry: registry, defaults: makeDefaults("RecommendedDefaults"), storageKey: "layout")
+        let store = LayoutStore(registry: registry, defaults: makeDefaults("RecommendedDefaults"), storageKey: "layout", suppressUIMetrics: false)
 
         XCTAssertEqual(Set(store.placed.map(\.descriptorID)), Set([
             "claude.session", "claude.weekly", "claude.trend",
             "claude.extra", "claude.today", "claude.yesterday", "claude.last30",
-            "codex.session", "codex.weekly", "codex.spark", "codex.sparkWeekly", "codex.trend",
+            "codex.weekly", "codex.spark", "codex.sparkWeekly", "codex.trend",
             "codex.credits", "codex.rateLimitResets", "codex.today", "codex.yesterday", "codex.last30",
             "devin.daily", "devin.weekly", "devin.extra",
             "grok.weekly", "grok.trend",
@@ -697,6 +697,8 @@ final class LayoutStoreTests: XCTestCase {
         // go below the caret — the same "core above, history below" shape as the other providers.
         XCTAssertEqual(primaryByProvider["claude"], ["claude.session", "claude.weekly", "claude.extra", "claude.trend"])
         XCTAssertEqual(expandedByProvider["claude"], ["claude.sonnet", "claude.fable", "claude.today", "claude.yesterday", "claude.last30"])
+        // Customize lists every *supported* metric regardless of default enablement, so the retired-by-
+        // default `codex.session` descriptor still appears here as an editable (now off-by-default) row.
         XCTAssertEqual(primaryByProvider["codex"], ["codex.session", "codex.weekly", "codex.trend"])
         // Spark (the optional model-specific limits) leads the On Demand section, before credits.
         XCTAssertEqual(expandedByProvider["codex"], [
@@ -725,7 +727,8 @@ final class LayoutStoreTests: XCTestCase {
             defaults: defaults,
             storageKey: "layout",
             defaultMetricIDs: ["claude.session"],
-            defaultExpandedMetricIDs: []
+            defaultExpandedMetricIDs: [],
+            suppressUIMetrics: false
         )
         let original = store.orderedSupportedMetrics(for: "claude").map(\.id)
         guard let first = original.first else { return XCTFail("missing Claude metrics") }
@@ -741,7 +744,8 @@ final class LayoutStoreTests: XCTestCase {
             defaults: defaults,
             storageKey: "layout",
             defaultMetricIDs: ["claude.session"],
-            defaultExpandedMetricIDs: []
+            defaultExpandedMetricIDs: [],
+            suppressUIMetrics: false
         )
         XCTAssertEqual(reloaded.orderedSupportedMetrics(for: "claude").map(\.id).first, "claude.extra")
 
@@ -931,7 +935,8 @@ final class LayoutStoreTests: XCTestCase {
             defaults: makeDefaults("VisibleDividerKeepsDisabled"),
             storageKey: "layout",
             defaultMetricIDs: ["cursor.usage", "cursor.today"],
-            defaultExpandedMetricIDs: ["cursor.requests", "cursor.today"]
+            defaultExpandedMetricIDs: ["cursor.requests", "cursor.today"],
+            suppressUIMetrics: false
         )
         let divider = "cursor::expanded-divider"
 
@@ -956,7 +961,8 @@ final class LayoutStoreTests: XCTestCase {
             defaults: defaults,
             storageKey: "layout",
             defaultMetricIDs: ["claude.session"],
-            defaultExpandedMetricIDs: []
+            defaultExpandedMetricIDs: [],
+            suppressUIMetrics: false
         )
         XCTAssertFalse(store.isMetricEnabled("claude.extra"))
 
@@ -1106,7 +1112,8 @@ final class LayoutStoreTests: XCTestCase {
             defaultMetricIDs: ["claude.session", "codex.session"],
             migrationBaselineMetricIDs: [],
             defaultPinnedMetricIDs: ["claude.session", "codex.session"],
-            defaultExpandedMetricIDs: []
+            defaultExpandedMetricIDs: [],
+            suppressUIMetrics: false
         )
 
         // Reorder providers first, so we can prove a per-provider reset leaves provider order alone.
@@ -1195,7 +1202,8 @@ final class LayoutStoreTests: XCTestCase {
             defaults: makeDefaults("DetailSplit"),
             storageKey: "layout",
             defaultMetricIDs: ["claude.session", "claude.weekly"],
-            defaultExpandedMetricIDs: ["claude.weekly"]
+            defaultExpandedMetricIDs: ["claude.weekly"],
+            suppressUIMetrics: false
         )
         let detail = store.customizeDetail(for: "claude")
         XCTAssertEqual(detail?.expandedMetrics.map(\.id), ["claude.weekly"])
@@ -1213,6 +1221,162 @@ final class LayoutStoreTests: XCTestCase {
             XCTAssertEqual(store.metricCount(for: id), MockData.descriptors(for: id).count)
         }
         XCTAssertEqual(store.metricCount(for: "missing"), 0)
+    }
+
+    /// Fork-local: with UI suppression ON (the app default), dollar-denominated and "Extra Usage"
+    /// metrics never surface in Customize, the pin list, or the dashboard — but the registry stays
+    /// intact so the Total Spend aggregator's spend-capability signal survives. Also covers the
+    /// menu-bar-pin seam: a tile pinned before suppression shipped stays persisted yet neither renders
+    /// nor consumes a per-provider pin slot.
+    func testDollarAndExtraUsageMetricsAreSuppressedFromUI() {
+        let registry = WidgetRegistry.from([
+            ClaudeProvider(),
+            CodexProvider(),
+            CopilotProvider(),
+            GrokProvider()
+        ])
+        let defaults = makeDefaults("SuppressionOn")
+
+        // Seed a real user pin the way the app would, with suppression OFF so the pin is allowed and
+        // persisted: star claude.today (a suppressed spend tile) alongside claude.session. The two
+        // default Claude pins (session + weekly) already fill the per-provider cap, so free a slot
+        // first. This reproduces the Major 2 scenario — a suppressed tile that was pinned before
+        // suppression shipped — and lets the production store below read it back through UserDefaults.
+        let seeder = LayoutStore(registry: registry, defaults: defaults, storageKey: "layout", suppressUIMetrics: false)
+        seeder.setPinned(false, for: "claude.weekly")
+        seeder.setPinned(true, for: "claude.today")
+        XCTAssertTrue(seeder.isPinned("claude.today"), "precondition: claude.today pins with suppression off")
+
+        // Default suppressUIMetrics: true (production behavior), reading the seeded layout back.
+        let store = LayoutStore(registry: registry, defaults: defaults, storageKey: "layout")
+
+        // Dollar tiles (caught by kind) are gone from every provider's supported-metric list…
+        let hidden = [
+            "claude.extra", "claude.today", "claude.yesterday", "claude.last30",
+            "codex.credits", "codex.today", "codex.yesterday", "codex.last30",
+            "copilot.orgSpend",
+            "grok.today", "grok.yesterday", "grok.last30",
+            // …and the three "Extra Usage"-family tiles that aren't dollar-kind are hidden by explicit id.
+            "copilot.extra", "copilot.orgCredits", "grok.payAsYouGo"
+        ]
+        for provider in ["claude", "codex", "copilot", "grok"] {
+            let ids = Set(store.orderedSupportedMetrics(for: provider).map(\.id))
+            for id in hidden where id.hasPrefix("\(provider).") {
+                XCTAssertFalse(ids.contains(id), "\(id) must be hidden from Customize")
+            }
+        }
+
+        // Non-dollar meters and the usage-trend chart stay visible.
+        let claudeIDs = store.orderedSupportedMetrics(for: "claude").map(\.id)
+        XCTAssertTrue(claudeIDs.contains("claude.session"))
+        XCTAssertTrue(claudeIDs.contains("claude.weekly"))
+        XCTAssertTrue(claudeIDs.contains("claude.trend"))
+        XCTAssertFalse(claudeIDs.contains("claude.extra"))
+
+        // The direct descriptor predicate: dollars by kind, plus the explicit ids.
+        XCTAssertTrue(registry.descriptor(id: "claude.extra")?.isSuppressedFromUI == true)
+        XCTAssertTrue(registry.descriptor(id: "grok.payAsYouGo")?.isSuppressedFromUI == true)
+        XCTAssertFalse(registry.descriptor(id: "claude.session")?.isSuppressedFromUI == true)
+
+        // visiblePlaced drops any suppressed tile that was placed by the default layout…
+        XCTAssertFalse(store.visiblePlaced.contains { $0.descriptorID == "claude.extra" })
+        XCTAssertTrue(store.visiblePlaced.contains { $0.descriptorID == "claude.session" })
+        // …but `placed` keeps it (hidden, not deleted), so re-enabling suppression off would restore it.
+        XCTAssertTrue(store.placed.contains { $0.descriptorID == "claude.extra" })
+
+        // Registry is untouched: the Total Spend aggregator's capability signal (isSpendTile) survives,
+        // so the donut still has data even though every spend row is hidden from the provider cards.
+        XCTAssertTrue(registry.descriptors.contains { $0.id == "claude.today" && $0.isSpendTile })
+        XCTAssertTrue(store.spendCapableProviders.contains { $0.id == "claude" })
+
+        // Major 1 regression: codex.rateLimitResets is a `.values(.all)` tile whose sole value is a
+        // *count* ("N available"); its `.dollars` kind is only the `.values` factory's seed default, not
+        // a statement that it renders currency. It must stay visible in Customize — otherwise it can't be
+        // re-enabled and the provider's metric count under-reports.
+        XCTAssertTrue(
+            store.orderedSupportedMetrics(for: "codex").map(\.id).contains("codex.rateLimitResets"),
+            "codex.rateLimitResets renders a count, not currency, so it must not be suppressed"
+        )
+        XCTAssertFalse(registry.descriptor(id: "codex.rateLimitResets")?.isSuppressedFromUI == true)
+
+        // Major 2 regression: the seeded claude.today pin is suppressed. It must stay persisted but
+        // neither render nor consume a menu-bar slot.
+        // (a) it never appears in the rendered menu-bar strip…
+        let claudePins = store.pinnedGroups.first { $0.provider.id == "claude" }
+        XCTAssertNotNil(claudePins, "claude still has a visible pin (claude.session)")
+        let claudePinIDs = Set((claudePins?.alwaysShownMetrics ?? []).map(\.id))
+            .union((claudePins?.expandedMetrics ?? []).map(\.id))
+        XCTAssertFalse(claudePinIDs.contains("claude.today"), "a suppressed pin must not render in the strip")
+        XCTAssertTrue(claudePinIDs.contains("claude.session"), "the visible pin still renders")
+        // (b) …it stays persisted, so it returns if suppression is ever turned off…
+        XCTAssertTrue(store.isPinned("claude.today"), "the suppressed pin is kept, not deleted")
+        // (c) …it does not count against the per-provider cap…
+        XCTAssertEqual(store.pinnedCount(forProvider: "claude"), 1, "a suppressed pin must not consume a slot")
+        // (d) …so a visible metric can still be pinned into the freed slot.
+        XCTAssertTrue(store.canPin("claude.weekly"), "the freed slot is available to a visible metric")
+
+        // metricCount reflects only visible descriptors (the L1 badge and the drop-zero-metric filter).
+        let visibleClaude = registry.descriptors(for: "claude").filter { !$0.isSuppressedFromUI }.count
+        XCTAssertEqual(store.metricCount(for: "claude"), visibleClaude)
+    }
+
+    /// Major 1 guard, table-driven over the *real* provider catalog. Every descriptor that renders the
+    /// full `.all` value set with a `.dollars` kind flows through the seed-vs-real branch of
+    /// `WidgetDescriptor.rendersCurrency` — the branch that used to lean on a `traySuffix` coincidence and
+    /// could silently drop a count-denominated tile (or, symmetrically, let a new dollar-seeded tile
+    /// vanish from the UI). This locks the `isSuppressedFromUI` verdict for the entire set: the key-set
+    /// equality means adding or reshaping a `.values(.all)` tile fails loudly here until its expected
+    /// verdict is recorded, and the per-id checks pin the one deliberate count exception
+    /// (`codex.rateLimitResets`) against the dollar tiles around it.
+    func testEverySelectAllDescriptorHasExpectedSuppression() {
+        let registry = WidgetRegistry.from(ProviderCatalog.make())
+
+        // Every `.dollars`-kind descriptor whose selection renders every backing value (`.all`) — the
+        // exact domain of the `.all` branch in `rendersCurrency`. `.kind`-selection dollar tiles (e.g.
+        // OpenRouter's today/week/month, copilot.orgSpend) carry a truthful kind and are covered by the
+        // fall-through, not this branch, so they are intentionally out of scope here.
+        let selectAll = registry.descriptors.filter {
+            guard $0.sample.kind == .dollars else { return false }
+            if case .all = $0.sample.selection { return true }
+            return false
+        }
+
+        // Expected `isSuppressedFromUI` for each. Every genuine dollar tile is suppressed; the sole
+        // exception is codex.rateLimitResets, a `.values(.all)` tile whose one value is a count
+        // ("N available") that only inherits the factory's `.dollars` seed.
+        let expected: [String: Bool] = [
+            // Local spend tiles (combined "cost · tokens"), one set per spend-tracking provider.
+            "claude.today": true, "claude.yesterday": true, "claude.last30": true,
+            "claude-2.today": true, "claude-2.yesterday": true, "claude-2.last30": true,
+            "codex.today": true, "codex.yesterday": true, "codex.last30": true,
+            "cursor.today": true, "cursor.yesterday": true, "cursor.last30": true,
+            "grok.today": true, "grok.yesterday": true, "grok.last30": true,
+            "opencode.today": true, "opencode.yesterday": true, "opencode.last30": true,
+            // Bounded dollar meters and unbounded dollar balances.
+            "claude.extra": true, "claude-2.extra": true,
+            "cursor.onDemand": true, "cursor.credits": true,
+            "devin.extra": true,
+            "opencode.session": true, "opencode.weekly": true, "opencode.monthly": true,
+            "openrouter.credits": true, "openrouter.balance": true, "openrouter.keyLimit": true,
+            // codex.credits: combined credit-balance tile, dollar-denominated.
+            "codex.credits": true,
+            // The one count-denominated `.values(.all)` tile — must stay visible.
+            "codex.rateLimitResets": false
+        ]
+
+        XCTAssertEqual(
+            Set(selectAll.map(\.id)), Set(expected.keys),
+            "A `.dollars`/`.all` descriptor was added, removed, or reshaped without updating this "
+            + "suppression table. Record its expected isSuppressedFromUI here so a dollar-seeded tile "
+            + "can't silently vanish from the UI (Major 1's failure class)."
+        )
+        for descriptor in selectAll {
+            guard let want = expected[descriptor.id] else { continue }
+            XCTAssertEqual(
+                descriptor.isSuppressedFromUI, want,
+                "\(descriptor.id): expected isSuppressedFromUI == \(want)"
+            )
+        }
     }
 
     func testCustomizeProviderIDClearsWhenLeavingCustomize() {
@@ -1266,7 +1430,11 @@ final class LayoutStoreTests: XCTestCase {
     }
 
     private func makeStore(_ name: String) -> LayoutStore {
-        LayoutStore(registry: .mock, defaults: makeDefaults(name), storageKey: "layout")
+        // suppressUIMetrics: false — these tests exercise the layout engine (reorder / undo / divider /
+        // counts / expand membership) against the full fixture metric set, including the dollar tiles the
+        // app hides. The fork's UI suppression is verified separately by
+        // `testDollarAndExtraUsageMetricsAreSuppressedFromUI`.
+        LayoutStore(registry: .mock, defaults: makeDefaults(name), storageKey: "layout", suppressUIMetrics: false)
     }
 
     private func makeDefaults(_ name: String) -> UserDefaults {

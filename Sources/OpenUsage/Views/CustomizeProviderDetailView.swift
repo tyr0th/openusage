@@ -37,7 +37,9 @@ struct CustomizeProviderDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .animation(Motion.spring, value: layout.expandedMetricIDs)
         } else {
-            // Unknown provider — L1 only lists known providers, so this is unreachable in practice.
+            // No detail to show — an unknown provider, or a known one with zero visible metrics.
+            // `customizeProviderRows` (the L1 list) lists only known providers with a non-zero visible
+            // metric count, so neither case is reachable from the UI in practice.
             EmptyView()
         }
     }

@@ -91,6 +91,9 @@ enum ProviderMarks {
         case "codex": return "circle.hexagongrid"
         case "cursor": return "cube"
         case "grok": return "bolt.fill"
+        // Placeholder: no real Higgsfield logo asset ships yet. Drop `ProviderIcons/higgsfield.svg` into
+        // the resource bundle and `mark(for:)` supersedes this SF Symbol automatically.
+        case "higgsfield": return "wand.and.stars"
         case "opencode": return "chevron.left.forwardslash.chevron.right"
         case "ollama": return "cloud"
         case "openrouter": return "point.3.connected.trianglepath.dotted"

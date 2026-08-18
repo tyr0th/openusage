@@ -3,8 +3,9 @@ import SwiftUI
 
 /// The dashboard's cross-provider Total Spend section: a native segmented period picker
 /// (Today / Yesterday / Last 30 Days) over a donut ring whose segments are each provider's share of
-/// the selected metric, with the total in the center and a ranked legend beside it. The title is a
-/// pull-down menu for Cost / Cost/MTok / Tokens. Data comes from `TotalSpendAggregator` over
+/// the selected metric, with the total in the center and a ranked legend beside it. This fork pins the
+/// metric to Tokens (no dollars anywhere), so the title is a plain, non-interactive label — the former
+/// Cost / Cost/MTok pull-down options are gone. Data comes from `TotalSpendAggregator` over
 /// the same snapshots the provider cards render. Shown whenever any enabled provider tracks spend
 /// (`LayoutStore.hasSpendCapableProvider`) and the toggle at the top of Settings is on; a period
 /// (or metric) with nothing to show uses a quiet empty state instead of hiding the card.
@@ -16,17 +17,19 @@ struct TotalSpendCard: View {
 
     /// The selected period survives popover closes and relaunches, like the meter-style toggles.
     @AppStorage("openusage.totalSpend.period") private var periodRawValue = TotalSpendPeriod.today.rawValue
-    /// The selected metric (Cost / Cost/MTok / Tokens) survives the same way.
-    @AppStorage("openusage.totalSpend.metric") private var metricRawValue = TotalSpendMetric.cost.rawValue
     @AppStorage(DensitySetting.key) private var density = DensitySetting.regular
 
     private var period: TotalSpendPeriod {
         TotalSpendPeriod(rawValue: periodRawValue) ?? .today
     }
 
-    private var metric: TotalSpendMetric {
-        TotalSpendMetric(rawValue: metricRawValue) ?? .cost
-    }
+    /// Fork-local: Ty doesn't want any dollar figure on this card, so the metric is pinned to Tokens —
+    /// the ring, center, and legend always read token share, never currency. The old
+    /// `openusage.totalSpend.metric` preference is intentionally *ignored* rather than migrated: a
+    /// stored `"cost"`/`apiSpend` value (or the unset default that resolved to `.cost`) can never
+    /// resurrect a dollar reading because it's never read. Cost / Cost/MTok stay in `TotalSpendMetric`
+    /// for the aggregator and share-card plumbing, but no UI can select them anymore.
+    private var metric: TotalSpendMetric { .tokens }
 
     /// The spend-tile providers the card may aggregate — capability-based (see
     /// `LayoutStore.spendCapableProviders`), so a provider stays counted even when its own rows are
@@ -56,7 +59,7 @@ struct TotalSpendCard: View {
     /// trailing where a provider header shows its mark.
     private var header: some View {
         HStack(spacing: 5) {
-            metricMenu
+            titleLabel
             Image(systemName: "info.circle")
                 .imageScale(.small)
                 .foregroundStyle(.secondary)
@@ -69,35 +72,16 @@ struct TotalSpendCard: View {
         .padding(.vertical, 2)
     }
 
-    /// Title that is itself the metric switch — a plain pull-down with zero extra chrome.
-    private var metricMenu: some View {
-        Menu {
-            ForEach(TotalSpendMetric.allCases) { option in
-                Button {
-                    metricRawValue = option.rawValue
-                } label: {
-                    if option == metric {
-                        Label(option.title, systemImage: "checkmark")
-                    } else {
-                        Text(option.title)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(metric.title)
-                    .font(.system(size: density.headerPointSize, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .accessibilityLabel("Total Spend Metric")
-        .accessibilityValue(metric.title)
+    /// Fork-local: the metric pull-down is gone (Cost / Cost/MTok were the other options, both
+    /// dollar-denominated). Tokens is the only thing this card shows now, so the header is a plain,
+    /// non-interactive title with no chrome.
+    private var titleLabel: some View {
+        Text(metric.title)
+            .font(.system(size: density.headerPointSize, weight: .semibold))
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityLabel("Total Usage")
     }
 
     /// Names the providers actually feeding the ring — the enabled spend-capable set — instead of a
@@ -135,7 +119,6 @@ struct TotalSpendCard: View {
         .frame(maxWidth: .infinity)
         .cardSurface()
         .animation(Motion.spring, value: periodRawValue)
-        .animation(Motion.spring, value: metricRawValue)
         .contextMenu {
             Button("Share Screenshot") {
                 ShareCardRenderer.shareTotalSpend(
@@ -371,13 +354,18 @@ struct TotalSpendRingContent: View {
 /// Stable per-provider brand tints for the Total Spend ring and legend — the one place the app maps
 /// a provider to a color, so the chart, legend, and share card always agree. Colors are keyed by
 /// provider ID only (never by rank or position), so a provider keeps its color across period
-/// switches, re-sorts, and launches. Hexes come from the legacy edition's per-plugin `brandColor`
-/// values; brands whose color is plain black (Cursor, Grok) get adaptive near-black/near-white
-/// dynamic colors so they read on both appearances without both landing on the same gray.
+/// switches, re-sorts, and launches. The Claude/Codex/Ollama tints are on the Catalyst terminal
+/// palette (cyan/purple/green/pink/orange/yellow) so this fork's donut matches the rest of Catalyst;
+/// the two Claude accounts are cyan (primary) vs. purple (second account) to stay clearly distinct.
+/// Remaining brands keep the legacy edition's per-plugin `brandColor` values; brands whose color is
+/// plain black (Cursor, Grok) get adaptive near-black/near-white dynamic colors so they read on both
+/// appearances without both landing on the same gray.
 enum TotalSpendPalette {
     private static let byProviderID: [String: Color] = [
-        "claude": hex(0xDE7356),                             // Claude terracotta
-        "codex": hex(0x10A37F),                              // OpenAI green (#10A37F)
+        "claude": hex(0x60EFFF),                             // Catalyst cyan — primary/signature Claude account
+        "claude-2": hex(0xA78BFA),                           // Catalyst purple — the second Claude account, clearly distinct
+        "codex": hex(0x00FF88),                              // Catalyst green
+        "higgsfield": hex(0xFF6B9D),                          // Catalyst pink (legend/consistency; no v1 spend tile)
         "cursor": dynamic(light: 0x13120A, dark: 0xF5F5F7),  // brand black (#13120A), flipped near-white in dark mode
         "grok": dynamic(light: 0x8E8E93, dark: 0x98989D),    // brand black, offset to gray next to Cursor
         "opencode": dynamic(light: 0x6E6E73, dark: 0xAEAEB2),  // OpenCode — grayscale brand, medium gray
@@ -391,10 +379,12 @@ enum TotalSpendPalette {
         "zai": dynamic(light: 0x2D2D2D, dark: 0xD1D1D6)
     ]
 
-    /// Deterministic backstop hues for a provider that ships without a palette entry — keyed off the
-    /// provider ID (not rank), so the color holds steady across periods and launches.
+    /// Deterministic backstop hues for a provider that ships without a palette entry (e.g. ollama) —
+    /// keyed off the provider ID (not rank), so the color holds steady across periods and launches.
+    /// On the Catalyst accent palette (pink/orange/yellow/purple) to stay complementary to the tinted
+    /// Claude/Codex segments above.
     private static let fallback: [Color] = [
-        hex(0x34C759), hex(0x5856D6), hex(0xFF2D55), hex(0xA2845E)
+        hex(0xFF6B9D), hex(0xFB923C), hex(0xFACC15), hex(0xA78BFA)
     ]
 
     static func color(for providerID: String) -> Color {

@@ -9,8 +9,18 @@ extension LayoutStore {
         registry.descriptor(id: widget.descriptorID)?.providerID
     }
 
+    /// Fork-local: whether a descriptor is hidden from the UI (dollar-denominated / "Extra Usage"
+    /// tiles — see `WidgetDescriptor.isSuppressedFromUI`). Applied at every display seam below so the
+    /// rows never reach the dashboard, Customize, or the menu-bar strip. An unknown id is not
+    /// suppressed — the existing `registry.descriptor(id:) != nil` guards handle stale ids.
+    func isSuppressedFromUI(_ descriptorID: String) -> Bool {
+        guard suppressesUIMetrics else { return false }
+        return registry.descriptor(id: descriptorID)?.isSuppressedFromUI ?? false
+    }
+
     var visiblePlaced: [PlacedWidget] {
         placed.filter { widget in
+            guard !isSuppressedFromUI(widget.descriptorID) else { return false }
             guard let providerID = providerID(of: widget) else { return true }
             return isProviderEnabled(providerID)
         }
@@ -91,21 +101,28 @@ extension LayoutStore {
     /// The L1 Customize list: every known provider in the user's saved order, regardless of enablement.
     /// Disabled providers appear here (greyed in the UI) so the user can re-enable them or open their
     /// detail — unlike the enabled-provider reorder list exposed by `customizeGroups`, which filters them
-    /// out. Each row carries the enablement flag and total metric count shown by the list.
+    /// out. Each row carries the enablement flag and total metric count shown by the list. A provider
+    /// with no visible metrics (every one UI-suppressed, e.g. all-dollar OpenRouter) is dropped: its L2
+    /// detail is nil (`customizeDetail`), so its row would open a dead, empty screen — and dropping it
+    /// makes the "OpenRouter disappears from the UI entirely" tradeoff actually true.
     var customizeProviderRows: [ProviderRow] {
-        orderedProviders().map { provider in
-            ProviderRow(
+        orderedProviders().compactMap { provider in
+            let count = metricCount(for: provider.id)
+            guard count > 0 else { return nil }
+            return ProviderRow(
                 provider: provider,
                 isEnabled: isProviderEnabled(provider.id),
-                metricCount: metricCount(for: provider.id)
+                metricCount: count
             )
         }
     }
 
-    /// Total metrics a provider supports — the L1 row's badge number. Registry descriptor count,
-    /// independent of how many the user has enabled.
+    /// Metrics a provider shows in the UI — the L1 row's badge number. Counts registry descriptors
+    /// minus the UI-suppressed ones (dollar / "Extra Usage" tiles, see `isSuppressedFromUI`),
+    /// independent of how many the user has enabled. A zero result is what drops the provider from
+    /// `customizeProviderRows` — an all-suppressed provider (e.g. all-dollar OpenRouter) has no L1 row.
     func metricCount(for providerID: String) -> Int {
-        registry.descriptors(for: providerID).count
+        registry.descriptors(for: providerID).count { !isSuppressedFromUI($0.id) }
     }
 
     /// The L2 Customize detail for one provider: every metric it supports, split across the
@@ -124,8 +141,12 @@ extension LayoutStore {
     }
 
     /// A provider's supported metrics in custom order, independent of whether each metric is enabled.
+    /// UI-suppressed metrics (dollar / "Extra Usage" tiles) are dropped so they never appear in
+    /// Customize, the pin list, or the menu-bar strip. `metricOrder` itself is left untouched, so the
+    /// persisted ordering survives and upstream merges stay clean.
     func orderedSupportedMetrics(for providerID: String) -> [WidgetDescriptor] {
         metricOrder(for: providerID).compactMap { registry.descriptor(id: $0) }
+            .filter { !isSuppressedFromUI($0.id) }
     }
 
     func metricOrderWithDivider(for providerID: String, dividerID: String) -> [String] {
